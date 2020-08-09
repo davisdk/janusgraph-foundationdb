@@ -44,7 +44,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * @author Ted Wilmes (twilmes@gmail.com)
  */
-public class FoundationDBKeyValueStore implements OrderedKeyValueStore {
+public class FoundationDBKeyValueStore implements OrderedKeyValueStore, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(FoundationDBKeyValueStore.class);
 
