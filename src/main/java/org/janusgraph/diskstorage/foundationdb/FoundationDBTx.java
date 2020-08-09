@@ -190,6 +190,10 @@ public class FoundationDBTx extends AbstractStoreTransaction {
         return result;
     }
 
+    public Iterable<KeyValue> getRangeAsync(final byte[] startKey, final byte[] endKey, final int limit) throws PermanentBackendException {
+        return tx.getRange(startKey, endKey, limit);
+    }
+
     public synchronized  Map<KVQuery, List<KeyValue>> getMultiRange(final List<Object[]> queries)
             throws PermanentBackendException {
         Map<KVQuery, List<KeyValue>> resultMap = new ConcurrentHashMap<>();

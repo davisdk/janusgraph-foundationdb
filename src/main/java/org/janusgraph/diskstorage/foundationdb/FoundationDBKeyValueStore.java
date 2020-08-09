@@ -15,8 +15,11 @@
 package org.janusgraph.diskstorage.foundationdb;
 
 import com.apple.foundationdb.KeyValue;
+import com.apple.foundationdb.LocalityUtil;
+import com.apple.foundationdb.async.CloseableAsyncIterator;
 import com.apple.foundationdb.directory.DirectorySubspace;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Iterators;
 import org.janusgraph.diskstorage.BackendException;
 import org.janusgraph.diskstorage.PermanentBackendException;
 import org.janusgraph.diskstorage.StaticBuffer;
@@ -231,6 +234,36 @@ public class FoundationDBKeyValueStore implements OrderedKeyValueStore {
         try {
             log.trace("db={}, op=delete, tx={}", name, txh);
             tx.clear(db.pack(key.as(ENTRY_FACTORY)));
+        } catch (Exception e) {
+            throw new PermanentBackendException(e);
+        }
+    }
+    public List<StaticBuffer> getBoundaryKeys() {
+        List<StaticBuffer> keys = new ArrayList<>();
+        try (CloseableAsyncIterator<byte[]> it = LocalityUtil.getBoundaryKeys(manager.db, db.range().begin, db.range().end)) {
+            it.forEachRemaining(key -> keys.add(getBuffer(db.unpack(key).getBytes(0))));
+        }
+        return keys;
+    }
+
+    public Iterator<KeyValueEntry> getSliceAsync(byte[] keyStart, byte[] keyEnd, int limit, KeySelector selector, StoreTransaction txh) throws BackendException {
+        log.trace("beginning db={}, op=getSliceAsync, tx={}", name, txh);
+        final FoundationDBTx tx = getTransaction(txh);
+        final byte[] startKey = (keyStart == null) ? db.range().begin : db.pack(keyStart);
+        final byte[] endKey = (keyEnd == null) ? db.range().end : db.pack(keyEnd);
+        try {
+            Iterable<KeyValue> range = tx.getRangeAsync(startKey, endKey, limit);
+            log.trace("db={}, op=getSliceAsync, tx={}", name, txh);
+            return Iterators.filter(
+                    Iterators.transform(range.iterator(), keyValue -> {
+                        StaticBuffer key = getBuffer(db.unpack(keyValue.getKey()).getBytes(0));
+                        if (selector == null || selector.include(key)) {
+                            return new KeyValueEntry(key, getBuffer(keyValue.getValue()));
+                        } else {
+                            return null;
+                        }
+                    }),
+                    keyValue -> keyValue != null);
         } catch (Exception e) {
             throw new PermanentBackendException(e);
         }
