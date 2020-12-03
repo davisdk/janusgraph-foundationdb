@@ -20,7 +20,6 @@ import com.apple.foundationdb.LocalityUtil;
 import com.apple.foundationdb.async.CloseableAsyncIterator;
 import com.apple.foundationdb.directory.DirectorySubspace;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.Iterators;
 import org.janusgraph.diskstorage.BackendException;
 import org.janusgraph.diskstorage.PermanentBackendException;
 import org.janusgraph.diskstorage.StaticBuffer;
@@ -224,16 +223,6 @@ public class FoundationDBKeyValueStore implements OrderedKeyValueStore, AutoClos
             	final KeySelector selector = query.getKeySelector();
                 FoundationDBRangeQuery rangeQuery = new FoundationDBRangeQuery(db, query);
                 AsyncIterator<KeyValue> result = tx.getRangeIter(rangeQuery);
-                Iterators.filter(
-                        Iterators.transform(result, keyValue -> {
-                            StaticBuffer key = getBuffer(db.unpack(keyValue.getKey()).getBytes(0));
-                            if (selector == null || selector.include(key)) {
-                                return new KeyValueEntry(key, getBuffer(keyValue.getValue()));
-                            } else {
-                                return null;
-                            }
-                        }),
-                        keyValue -> keyValue != null);
                 resultMap.put(query,
                         new FoundationDBRecordAsyncIterator(db, tx, rangeQuery, result, query.getKeySelector()));
             }
