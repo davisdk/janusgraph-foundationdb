@@ -16,13 +16,17 @@ package org.janusgraph.diskstorage.foundationdb;
 
 import com.apple.foundationdb.KeyValue;
 import com.apple.foundationdb.async.AsyncIterator;
+import com.apple.foundationdb.LocalityUtil;
+import com.apple.foundationdb.async.CloseableAsyncIterator;
 import com.apple.foundationdb.directory.DirectorySubspace;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Iterators;
 import org.janusgraph.diskstorage.BackendException;
 import org.janusgraph.diskstorage.PermanentBackendException;
 import org.janusgraph.diskstorage.StaticBuffer;
 import org.janusgraph.diskstorage.keycolumnvalue.StoreTransaction;
 import org.janusgraph.diskstorage.keycolumnvalue.keyvalue.KVQuery;
+import org.janusgraph.diskstorage.keycolumnvalue.keyvalue.KeySelector;
 import org.janusgraph.diskstorage.keycolumnvalue.keyvalue.KeyValueEntry;
 import org.janusgraph.diskstorage.keycolumnvalue.keyvalue.OrderedKeyValueStore;
 import org.janusgraph.diskstorage.util.RecordIterator;
@@ -32,12 +36,13 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
 import java.util.HashMap;
 
 /**
  * @author Ted Wilmes (twilmes@gmail.com)
  */
-public class FoundationDBKeyValueStore implements OrderedKeyValueStore {
+public class FoundationDBKeyValueStore implements OrderedKeyValueStore, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(FoundationDBKeyValueStore.class);
 
@@ -179,7 +184,7 @@ public class FoundationDBKeyValueStore implements OrderedKeyValueStore {
         }
     }
 
-    public Map<KVQuery,RecordIterator<KeyValueEntry>> getSlicesSync (List<KVQuery> queries, StoreTransaction txh) throws BackendException {
+    public Map<KVQuery,RecordIterator<KeyValueEntry>> getSlicesSync(List<KVQuery> queries, StoreTransaction txh) throws BackendException {
         log.trace("beginning db={}, op=getSlicesSync, tx={}", name, txh);
         FoundationDBTx tx = getTransaction(txh);
         final Map<KVQuery, FoundationDBRangeQuery> fdbQueries = new HashMap<>();
@@ -216,8 +221,19 @@ public class FoundationDBKeyValueStore implements OrderedKeyValueStore {
 
         try {
             for (final KVQuery query : queries) {
+            	final KeySelector selector = query.getKeySelector();
                 FoundationDBRangeQuery rangeQuery = new FoundationDBRangeQuery(db, query);
                 AsyncIterator<KeyValue> result = tx.getRangeIter(rangeQuery);
+                Iterators.filter(
+                        Iterators.transform(result, keyValue -> {
+                            StaticBuffer key = getBuffer(db.unpack(keyValue.getKey()).getBytes(0));
+                            if (selector == null || selector.include(key)) {
+                                return new KeyValueEntry(key, getBuffer(keyValue.getValue()));
+                            } else {
+                                return null;
+                            }
+                        }),
+                        keyValue -> keyValue != null);
                 resultMap.put(query,
                         new FoundationDBRecordAsyncIterator(db, tx, rangeQuery, result, query.getKeySelector()));
             }
@@ -226,8 +242,6 @@ public class FoundationDBKeyValueStore implements OrderedKeyValueStore {
 
             throw new PermanentBackendException(e);
         }
-
-
         return resultMap;
     }
 
@@ -253,6 +267,14 @@ public class FoundationDBKeyValueStore implements OrderedKeyValueStore {
             log.error("db={}, op=delete, tx={} with exception", name, txh, e);
             throw new PermanentBackendException(e);
         }
+    }
+
+    public List<StaticBuffer> getBoundaryKeys() {
+        List<StaticBuffer> keys = new ArrayList<>();
+        try (CloseableAsyncIterator<byte[]> it = LocalityUtil.getBoundaryKeys(manager.db, db.range().begin, db.range().end)) {
+            it.forEachRemaining(key -> keys.add(getBuffer(db.unpack(key).getBytes(0))));
+        }
+        return keys;
     }
 
     static StaticBuffer getBuffer(byte[] entry) {
